@@ -1,0 +1,23 @@
+<idea-plugin>
+    <id>com.wepie.codex.selectiontoolbar</id>
+    <name>Codex Selection Toolbar</name>
+    <vendor email="dev@wepie.com" url="https://wepie.com">wepie</vendor>
+    <description>Adds a floating "Send to Codex" action for selected editor text.</description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <actions>
+        <action id="Codex.SendContext"
+                class="com.wepie.codex.SendContextAction"
+                text="Send to Codex"
+                description="Copy selected code reference, then switch to Codex and paste it"
+                icon="icons/codex.svg">
+            <add-to-group group-id="Floating.CodeToolbar" anchor="after" relative-to-action="Floating.CodeToolbar.Surround"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+    </actions>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <notificationGroup id="Codex Selection Toolbar" displayType="BALLOON"/>
+    </extensions>
+</idea-plugin>
