@@ -5,6 +5,7 @@ import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.DumbAware
 import java.awt.datatransfer.StringSelection
@@ -62,13 +63,16 @@ abstract class BaseCodexAction : AnAction(), DumbAware {
             fullPath
         }
 
-        val ref = "@$relativePath#L$startLine-$endLine"
-        val outcome = perform(ref)
+        val lineRange = if (startLine == endLine) "L$startLine" else "L$startLine-$endLine"
+        val ref = "@$relativePath#$lineRange"
 
-        NotificationGroupManager.getInstance()
-            .getNotificationGroup("Codex Selection Toolbar")
-            .createNotification(outcome.title, outcome.message, outcome.type)
-            .notify(project)
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val outcome = perform(ref)
+            NotificationGroupManager.getInstance()
+                .getNotificationGroup("Codex Selection Toolbar")
+                .createNotification(outcome.title, outcome.message, outcome.type)
+                .notify(project)
+        }
     }
 
     protected abstract fun perform(ref: String): Outcome
@@ -93,48 +97,21 @@ private object CodexAutomation {
 
         val lines = listOf(
             "tell application \"System Events\"",
-            "tell process \"Codex\"",
-            "set codexWindows to every window",
-            "if (count of codexWindows) is 0 then error \"Codex has no windows\"",
-            "set targetWindow to item 1 of codexWindows",
-            "if (count of codexWindows) > 1 then",
-            "set minArea to 2147483647",
-            "repeat with currentWindow in codexWindows",
-            "set {w, h} to size of currentWindow",
-            "set area to (w * h)",
-            "if area < minArea then",
-            "set minArea to area",
-            "set targetWindow to currentWindow",
-            "end if",
+            "if not (exists process \"Codex\") then error \"Codex is not running\"",
+            "set prevApp to name of first process whose frontmost is true",
+            "keystroke \"m\" using command down",
+            "set attempts to 0",
+            "repeat while (name of first process whose frontmost is true) is not \"Codex\"",
+            "delay 0.05",
+            "set attempts to attempts + 1",
+            "if attempts > 40 then error \"Codex did not become active\"",
             "end repeat",
-            "end if",
-            "set windowsToRestore to {}",
-            "repeat with currentWindow in codexWindows",
-            "if currentWindow is not targetWindow then",
-            "try",
-            "if (value of attribute \"AXMinimized\" of currentWindow) is false then",
-            "set value of attribute \"AXMinimized\" of currentWindow to true",
-            "set end of windowsToRestore to currentWindow",
-            "end if",
-            "end try",
-            "end if",
-            "end repeat",
-            "try",
-            "set value of attribute \"AXMinimized\" of targetWindow to false",
-            "end try",
-            "perform action \"AXRaise\" of targetWindow",
-            "set value of attribute \"AXMain\" of targetWindow to true",
-            "try",
-            "set value of attribute \"AXFocused\" of targetWindow to true",
-            "end try",
-            "set frontmost to true",
             "keystroke \"v\" using command down",
-            "repeat with w in windowsToRestore",
             "try",
-            "set value of attribute \"AXMinimized\" of w to false",
-            "end try",
-            "end repeat",
+            "tell process prevApp",
+            "set frontmost to true",
             "end tell",
+            "end try",
             "end tell",
         )
 
@@ -144,8 +121,10 @@ private object CodexAutomation {
         val reason = when {
             result.stderr.contains("Not authorized", ignoreCase = true) ->
                 "Accessibility permission is required for Android Studio to control keyboard input"
-            result.stderr.contains("Codex has no windows", ignoreCase = true) ->
-                "Codex is running but no window is available"
+            result.stderr.contains("Codex is not running", ignoreCase = true) ->
+                "Codex is not running"
+            result.stderr.contains("did not become active", ignoreCase = true) ->
+                "Codex did not respond to the global shortcut (Cmd+M)"
             result.stderr.isNotBlank() -> result.stderr
             else -> "unknown AppleScript error"
         }
@@ -167,7 +146,7 @@ private object CodexAutomation {
             return OsaResult(exitCode = -1, stderr = e.message ?: "failed to launch osascript")
         }
 
-        val finished = process.waitFor(4, TimeUnit.SECONDS)
+        val finished = process.waitFor(8, TimeUnit.SECONDS)
         if (!finished) {
             process.destroyForcibly()
             return OsaResult(exitCode = -1, stderr = "timed out waiting for macOS automation")

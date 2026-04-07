@@ -5,3 +5,5 @@ out/
 *.iml
 .DS_Store
 .intellijPlatform/
+local.properties
+.kotlin/
