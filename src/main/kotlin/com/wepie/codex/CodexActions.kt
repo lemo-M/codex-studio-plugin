@@ -101,7 +101,7 @@ private object CodexAutomation {
             "set prevApp to name of first process whose frontmost is true",
             "keystroke \"m\" using command down",
             "set attempts to 0",
-            "repeat while (name of first process whose frontmost is true) is not \"Codex\"",
+            "repeat while (frontmost of process \"Codex\") is false",
             "delay 0.05",
             "set attempts to attempts + 1",
             "if attempts > 40 then error \"Codex did not become active\"",
