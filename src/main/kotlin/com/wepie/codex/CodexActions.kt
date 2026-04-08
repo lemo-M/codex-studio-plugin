@@ -11,24 +11,23 @@ import com.intellij.openapi.project.DumbAware
 import java.awt.datatransfer.StringSelection
 import java.util.concurrent.TimeUnit
 
+internal val isMacOS: Boolean =
+    System.getProperty("os.name").orEmpty().lowercase().contains("mac")
+
 class SendContextAction : BaseCodexAction() {
-    override fun perform(ref: String): Outcome {
+    override fun perform(ref: String): Outcome? {
         CopyPasteManager.getInstance().setContents(StringSelection(ref))
 
         return when (val result = CodexAutomation.switchAndPaste()) {
-            CodexAutomation.Result.SUCCESS -> Outcome(
-                title = "Send to Codex",
-                message = "Switched to Codex and pasted:\n$ref",
-                type = NotificationType.INFORMATION,
-            )
+            CodexAutomation.Result.SUCCESS -> null
             CodexAutomation.Result.UNSUPPORTED_OS -> Outcome(
                 title = "Send to Codex",
-                message = "Copied to clipboard (switch-and-paste requires macOS):\n$ref",
+                message = "已复制到剪贴板（自动切换功能仅支持 macOS）",
                 type = NotificationType.INFORMATION,
             )
             is CodexAutomation.Result.FAILED -> Outcome(
                 title = "Send to Codex",
-                message = "Copied to clipboard. Switch-and-paste failed: ${result.reason}\n$ref",
+                message = "Switch-and-paste failed: ${result.reason}",
                 type = NotificationType.WARNING,
             )
         }
@@ -68,14 +67,16 @@ abstract class BaseCodexAction : AnAction(), DumbAware {
 
         ApplicationManager.getApplication().executeOnPooledThread {
             val outcome = perform(ref)
-            NotificationGroupManager.getInstance()
-                .getNotificationGroup("Codex Selection Toolbar")
-                .createNotification(outcome.title, outcome.message, outcome.type)
-                .notify(project)
+            if (outcome != null) {
+                NotificationGroupManager.getInstance()
+                    .getNotificationGroup("Codex Selection Toolbar")
+                    .createNotification(outcome.title, outcome.message, outcome.type)
+                    .notify(project)
+            }
         }
     }
 
-    protected abstract fun perform(ref: String): Outcome
+    protected abstract fun perform(ref: String): Outcome?
 }
 
 data class Outcome(
@@ -92,26 +93,22 @@ private object CodexAutomation {
     }
 
     fun switchAndPaste(): Result {
-        val osName = System.getProperty("os.name").orEmpty().lowercase()
-        if (!osName.contains("mac")) return Result.UNSUPPORTED_OS
+        if (!isMacOS) return Result.UNSUPPORTED_OS
 
+        val shortcut = CodexSettingsState.instance.shortcut
+            .let { ParsedShortcut.parse(it) }
+            ?: ParsedShortcut.parse(DEFAULT_SHORTCUT)!!
         val lines = listOf(
             "tell application \"System Events\"",
             "if not (exists process \"Codex\") then error \"Codex is not running\"",
-            "set prevApp to name of first process whose frontmost is true",
-            "keystroke \"m\" using command down",
+            "keystroke \"${shortcut.key}\"${shortcut.appleScriptUsing}",
             "set attempts to 0",
             "repeat while (frontmost of process \"Codex\") is false",
             "delay 0.05",
             "set attempts to attempts + 1",
-            "if attempts > 40 then error \"Codex did not become active\"",
+            "if attempts > 60 then error \"Codex did not become active\"",
             "end repeat",
             "keystroke \"v\" using command down",
-            "try",
-            "tell process prevApp",
-            "set frontmost to true",
-            "end tell",
-            "end try",
             "end tell",
         )
 
@@ -124,7 +121,7 @@ private object CodexAutomation {
             result.stderr.contains("Codex is not running", ignoreCase = true) ->
                 "Codex is not running"
             result.stderr.contains("did not become active", ignoreCase = true) ->
-                "Codex did not respond to the global shortcut (Cmd+M)"
+                "Codex did not respond to the global shortcut (${shortcut.displayName})"
             result.stderr.isNotBlank() -> result.stderr
             else -> "unknown AppleScript error"
         }
@@ -141,12 +138,12 @@ private object CodexAutomation {
         }
 
         val process = try {
-            ProcessBuilder(args).start()
+            ProcessBuilder(args).redirectOutput(ProcessBuilder.Redirect.DISCARD).start()
         } catch (e: Exception) {
             return OsaResult(exitCode = -1, stderr = e.message ?: "failed to launch osascript")
         }
 
-        val finished = process.waitFor(8, TimeUnit.SECONDS)
+        val finished = process.waitFor(6, TimeUnit.SECONDS)
         if (!finished) {
             process.destroyForcibly()
             return OsaResult(exitCode = -1, stderr = "timed out waiting for macOS automation")

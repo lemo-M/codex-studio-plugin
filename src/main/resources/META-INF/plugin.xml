@@ -1,8 +1,29 @@
 <idea-plugin>
     <id>com.wepie.codex.selectiontoolbar</id>
     <name>Codex Selection Toolbar</name>
-    <vendor email="dev@wepie.com" url="https://wepie.com">wepie</vendor>
+    <vendor>mongle</vendor>
     <description>Adds a floating "Send to Codex" action for selected editor text.</description>
+
+    <change-notes><![CDATA[
+        <b>0.2.1</b>
+        <ul>
+            <li>修复首次点击必定失败的问题：预热目标从空脚本改为真正查询 System Events，彻底消除冷启动延迟</li>
+            <li>将 Codex 响应等待上限从 2 秒提升至 4 秒，避免系统较慢时误报超时</li>
+            <li>发送成功后静默，不再弹出通知；仅失败时提醒</li>
+            <li>发送后焦点留在 Codex 窗口，不再自动切回 Android Studio</li>
+            <li>修复 ⌥⌘M 快捷键在 macOS 上显示为 ^⌥M 的问题</li>
+        </ul>
+        <b>0.2.0</b>
+        <ul>
+            <li>支持自定义全局快捷键 — 在 Settings → Tools → Send to Codex 中填入与 Codex 一致的快捷键</li>
+            <li>新增 ⌥⌘M 快捷键，可不借助工具栏直接触发发送</li>
+            <li>插件启动时后台预热 osascript，减少首次唤起延迟</li>
+        </ul>
+        <b>0.1.0</b>
+        <ul>
+            <li>初始版本：选中代码后通过浮动工具栏或右键菜单一键发送代码引用并切换到 Codex</li>
+        </ul>
+    ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
 
@@ -12,12 +33,19 @@
                 text="Send to Codex"
                 description="Copy selected code reference, then switch to Codex and paste it"
                 icon="icons/codex.svg">
+            <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="control alt M"/>
             <add-to-group group-id="Floating.CodeToolbar" anchor="after" relative-to-action="Floating.CodeToolbar.Surround"/>
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
         </action>
     </actions>
 
     <extensions defaultExtensionNs="com.intellij">
+        <postStartupActivity implementation="com.wepie.codex.CodexStartupActivity"/>
         <notificationGroup id="Codex Selection Toolbar" displayType="BALLOON"/>
+        <applicationService serviceImplementation="com.wepie.codex.CodexSettingsState"/>
+        <applicationConfigurable parentId="tools"
+                                 instance="com.wepie.codex.CodexSettingsConfigurable"
+                                 id="com.wepie.codex.settings"
+                                 displayName="Send to Codex"/>
     </extensions>
 </idea-plugin>
