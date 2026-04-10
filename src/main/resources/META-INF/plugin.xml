@@ -5,6 +5,11 @@
     <description>Adds a floating "Send to Codex" action for selected editor text.</description>
 
     <change-notes><![CDATA[
+        <b>0.2.2</b>
+        <ul>
+            <li>修复 ⌃⌥M 快捷键时修饰键污染问题：改用 JXA CGEvent API 替代 AppleScript keystroke，完全免疫物理按键状态干扰</li>
+            <li>智能等待：先轮询释放所有物理修饰键，再发送精确指定的快捷键序列，彻底消除误触</li>
+        </ul>
         <b>0.2.1</b>
         <ul>
             <li>修复首次点击必定失败的问题：预热目标从空脚本改为真正查询 System Events，彻底消除冷启动延迟</li>

@@ -98,21 +98,43 @@ private object CodexAutomation {
         val shortcut = CodexSettingsState.instance.shortcut
             .let { ParsedShortcut.parse(it) }
             ?: ParsedShortcut.parse(DEFAULT_SHORTCUT)!!
-        val lines = listOf(
-            "tell application \"System Events\"",
-            "if not (exists process \"Codex\") then error \"Codex is not running\"",
-            "keystroke \"${shortcut.key}\"${shortcut.appleScriptUsing}",
-            "set attempts to 0",
-            "repeat while (frontmost of process \"Codex\") is false",
-            "delay 0.05",
-            "set attempts to attempts + 1",
-            "if attempts > 60 then error \"Codex did not become active\"",
-            "end repeat",
-            "keystroke \"v\" using command down",
-            "end tell",
-        )
+        val keyCode = shortcut.keyCode
+        if (keyCode < 0) return Result.FAILED("Unsupported key: '${shortcut.key}'")
 
-        val result = runOsaScript(lines)
+        // JXA script using CGEvent — immune to physical modifier key contamination.
+        // 1. Poll until all physical modifier keys are released (max 500ms)
+        // 2. Send the Codex global shortcut via CGEvent (exact flags, not affected by held keys)
+        // 3. Poll until Codex becomes frontmost (max 3s)
+        // 4. Send Cmd+V via CGEvent to paste
+        val script = """
+            ObjC.import('CoreGraphics');
+            var se = Application('System Events');
+            if (!se.processes.whose({name: 'Codex'}).length)
+                throw new Error('Codex is not running');
+            for (var i = 0; i < 50; i++) {
+                if (($.CGEventSourceFlagsState(0) & 0x1E0000) === 0) break;
+                delay(0.01);
+            }
+            var src = $.CGEventSourceCreate(-1);
+            function sendKey(kc, flags) {
+                var d = $.CGEventCreateKeyboardEvent(src, kc, true);
+                $.CGEventSetFlags(d, flags);
+                $.CGEventPost(0, d);
+                var u = $.CGEventCreateKeyboardEvent(src, kc, false);
+                $.CGEventSetFlags(u, flags);
+                $.CGEventPost(0, u);
+            }
+            sendKey($keyCode, ${shortcut.cgEventFlags});
+            var codex = se.processes.whose({name: 'Codex'})[0];
+            for (var i = 0; i < 60; i++) {
+                if (codex.frontmost()) break;
+                delay(0.05);
+                if (i === 59) throw new Error('Codex did not become active');
+            }
+            sendKey(0x09, 0x100000);
+        """.trimIndent()
+
+        val result = runJxa(script)
         if (result.exitCode == 0) return Result.SUCCESS
 
         val reason = when {
@@ -123,25 +145,20 @@ private object CodexAutomation {
             result.stderr.contains("did not become active", ignoreCase = true) ->
                 "Codex did not respond to the global shortcut (${shortcut.displayName})"
             result.stderr.isNotBlank() -> result.stderr
-            else -> "unknown AppleScript error"
+            else -> "unknown error"
         }
         return Result.FAILED(reason)
     }
 
-    private fun runOsaScript(lines: List<String>): OsaResult {
-        val args = buildList {
-            add("osascript")
-            lines.forEach {
-                add("-e")
-                add(it)
-            }
-        }
-
+    private fun runJxa(script: String): OsaResult {
         val process = try {
-            ProcessBuilder(args).redirectOutput(ProcessBuilder.Redirect.DISCARD).start()
+            ProcessBuilder("osascript", "-l", "JavaScript")
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .start()
         } catch (e: Exception) {
             return OsaResult(exitCode = -1, stderr = e.message ?: "failed to launch osascript")
         }
+        process.outputStream.bufferedWriter().use { it.write(script) }
 
         val finished = process.waitFor(6, TimeUnit.SECONDS)
         if (!finished) {
